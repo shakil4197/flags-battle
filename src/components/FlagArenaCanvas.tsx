@@ -15,6 +15,9 @@ interface FlagEntity {
   r: number;
   alive: boolean;
   flash: number;
+  squash: number;
+  squashVel: number;
+  squashAngle: number;
   shielded: boolean;
   sawTimer: number;
   sawAngle: number;
@@ -106,9 +109,9 @@ export function FlagArenaCanvas({
 
     const count = participants.length;
     const baseRadius = count > 24 ? 13 : 19.5;
-    // Deliberately slower, suspenseful pace so matches take ~75-95s (team) / ~45-60s (final)
-    const minSpeed = count > 24 ? 102 : 120;
-    const maxSpeed = count > 24 ? 186 : 215;
+    // Bouncy speeds calibrated so matches stay suspenseful (~75-95s team / ~45-60s final)
+    const minSpeed = count > 24 ? 115 : 132;
+    const maxSpeed = count > 24 ? 215 : 240;
 
     const entities: FlagEntity[] = participants.map((code, idx) => {
       const country = COUNTRY_250_MAP[code] || {
@@ -125,7 +128,7 @@ export function FlagArenaCanvas({
       const y = CY + Math.sin(goldenAngle) * dist;
 
       const velAngle = goldenAngle + Math.PI * 0.58 + (idx % 5) * 0.25;
-      const speed = minSpeed + (idx % 7) * 10;
+      const speed = minSpeed + (idx % 7) * 12;
 
       return {
         code,
@@ -137,6 +140,9 @@ export function FlagArenaCanvas({
         r: baseRadius,
         alive: true,
         flash: 0,
+        squash: 0,
+        squashVel: 0,
+        squashAngle: 0,
         shielded: false,
         sawTimer: 0,
         sawAngle: (idx * 1.1) % (Math.PI * 2),
@@ -169,6 +175,12 @@ export function FlagArenaCanvas({
     let completeFired = false;
     let lastTime = performance.now();
     let rafId = 0;
+
+    const triggerSquash = (f: FlagEntity, nx: number, ny: number, amount: number) => {
+      f.squashAngle = Math.atan2(ny, nx);
+      f.squash = Math.min(0.32, Math.max(f.squash, amount));
+      f.squashVel = -amount * 6.5;
+    };
 
     const spawnSparks = (x: number, y: number, color: string, countParticles: number) => {
       for (let i = 0; i < countParticles; i++) {
@@ -233,7 +245,6 @@ export function FlagArenaCanvas({
         const minRingR = count > 24 ? 174 : 158;
         currentRingR = INITIAL_RING_R - (INITIAL_RING_R - minRingR) * Math.pow(progress, 1.3);
 
-        // Spawn center SAW / SHD orbs steadily without overwhelming eliminations
         orbSpawnTimer -= dt;
         if (orbSpawnTimer <= 0 && orbs.length < 1) {
           orbSpawnTimer = count > 24 ? 5.8 : 4.8;
@@ -269,6 +280,16 @@ export function FlagArenaCanvas({
 
           f.r += (dynamicR - f.r) * Math.min(1, dt * 4);
           if (f.flash > 0) f.flash = Math.max(0, f.flash - dt * 3);
+
+          // Spring-damper squash-and-stretch recovery for bouncy ball look
+          const springForce = -170 * f.squash - 12 * f.squashVel;
+          f.squashVel += springForce * dt;
+          f.squash += f.squashVel * dt;
+          if (Math.abs(f.squash) < 0.002 && Math.abs(f.squashVel) < 0.01) {
+            f.squash = 0;
+            f.squashVel = 0;
+          }
+
           if (f.sawTimer > 0) {
             f.sawTimer = Math.max(0, f.sawTimer - dt);
             f.sawAngle += dt * 6.4;
@@ -283,8 +304,10 @@ export function FlagArenaCanvas({
           const tx = -dy / dist;
           const ty = dx / dist;
 
-          f.vx += tx * 11 * dt + (Math.random() - 0.5) * 32 * dt;
-          f.vy += ty * 11 * dt + (Math.random() - 0.5) * 32 * dt;
+          // Subtle bouncy gravity + playful orbital bounce forces
+          f.vy += 88 * dt;
+          f.vx += tx * 16 * dt + (Math.random() - 0.5) * 34 * dt;
+          f.vy += ty * 16 * dt + (Math.random() - 0.5) * 34 * dt;
 
           if (elapsed > targetDuration * 0.92) {
             const push = (elapsed - targetDuration * 0.92) * 8;
@@ -326,7 +349,7 @@ export function FlagArenaCanvas({
           }
         }
 
-        // Elastic flag-to-flag collisions + orbiting SAW blade combat
+        // Bouncy elastic flag-to-flag collisions + orbiting SAW blade combat
         for (let i = 0; i < entities.length; i++) {
           const a = entities[i];
           if (!a.alive) continue;
@@ -373,7 +396,7 @@ export function FlagArenaCanvas({
               const dist = Math.sqrt(distSq);
               const nx = dx / dist;
               const ny = dy / dist;
-              const overlap = (minDist - dist) * 0.5;
+              const overlap = (minDist - dist) * 0.52;
               a.x -= nx * overlap;
               a.y -= ny * overlap;
               b.x += nx * overlap;
@@ -383,15 +406,20 @@ export function FlagArenaCanvas({
               const rvy = b.vy - a.vy;
               const velAlongNormal = rvx * nx + rvy * ny;
               if (velAlongNormal < 0) {
-                const impulse = -velAlongNormal * 1.02;
+                // Super elastic bouncy collision (restitution = 1.07)
+                const impulse = -velAlongNormal * 1.07;
                 a.vx -= impulse * nx;
                 a.vy -= impulse * ny;
                 b.vx += impulse * nx;
                 b.vy += impulse * ny;
-                if (Math.abs(velAlongNormal) > 110) {
-                  a.flash = 0.35;
-                  b.flash = 0.35;
-                  if (Math.random() < 0.18) arcadeAudio.playBounce(0.4);
+
+                const hitStrength = Math.min(0.28, Math.abs(velAlongNormal) / 520);
+                if (hitStrength > 0.08) {
+                  triggerSquash(a, nx, ny, hitStrength);
+                  triggerSquash(b, nx, ny, hitStrength);
+                  a.flash = 0.3;
+                  b.flash = 0.3;
+                  if (Math.random() < 0.32) arcadeAudio.playBounce(hitStrength * 2.5);
                 }
               }
             }
@@ -399,7 +427,7 @@ export function FlagArenaCanvas({
           if (roundFinished) break;
         }
 
-        // Ring boundary & rotating crimson exit gate check
+        // Bouncy ring boundary & rotating crimson exit gate check
         if (!roundFinished) {
           for (let i = 0; i < entities.length; i++) {
             const f = entities[i];
@@ -422,9 +450,10 @@ export function FlagArenaCanvas({
                   f.y = CY + ny * (currentRingR - f.r - 2);
                   const dot = f.vx * nx + f.vy * ny;
                   if (dot > 0) {
-                    f.vx -= 2 * dot * nx;
-                    f.vy -= 2 * dot * ny;
+                    f.vx -= 2.1 * dot * nx;
+                    f.vy -= 2.1 * dot * ny;
                   }
+                  triggerSquash(f, nx, ny, 0.28);
                   arcadeAudio.playShieldBlock();
                   spawnSparks(f.x, f.y, '#10B981', 12);
                 } else if (dist > currentRingR + f.r * 0.35) {
@@ -439,10 +468,18 @@ export function FlagArenaCanvas({
               f.y = CY + ny * (currentRingR - f.r - 0.5);
               const dot = f.vx * nx + f.vy * ny;
               if (dot > 0) {
-                f.vx -= 2 * dot * nx;
-                f.vy -= 2 * dot * ny;
-                f.vx += -ny * 10;
-                f.vy += nx * 10;
+                // High-energy elastic wall bounce + subtle upward spring when hitting bottom half
+                f.vx -= 2.08 * dot * nx;
+                f.vy -= 2.08 * dot * ny;
+                if (ny > 0.25) {
+                  f.vy -= 38 * ny;
+                }
+                f.vx += -ny * 14;
+                f.vy += nx * 14;
+
+                const wallHit = Math.min(0.3, dot / 260);
+                triggerSquash(f, nx, ny, Math.max(0.14, wallHit));
+                if (Math.random() < 0.35) arcadeAudio.playBounce(0.6);
               }
             }
           }
@@ -593,9 +630,18 @@ export function FlagArenaCanvas({
           }
         }
 
+        // Apply bouncy squash-and-stretch transform around impact normal
+        ctx.save();
+        if (Math.abs(f.squash) > 0.005) {
+          ctx.translate(f.x, f.y);
+          ctx.rotate(f.squashAngle);
+          ctx.scale(1 - f.squash * 0.65, 1 + f.squash * 0.65);
+          ctx.rotate(-f.squashAngle);
+          ctx.translate(-f.x, -f.y);
+        }
+
         drawCountryFlagCircle(ctx, f.country, f.x, f.y, f.r);
 
-        ctx.save();
         if (f.shielded) {
           ctx.beginPath();
           ctx.arc(f.x, f.y, f.r + 2.8, 0, Math.PI * 2);

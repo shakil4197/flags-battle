@@ -4,6 +4,12 @@ class ArcadeAudioEngine {
   private volume = 0.32;
   private lastBounceTime = 0;
 
+  private musicMasterGain: GainNode | null = null;
+  private musicTimer: number | null = null;
+  private musicEnabled = false;
+  private musicStep = 0;
+  private musicDucked = false;
+
   constructor() {
     try {
       const savedMuted = localStorage.getItem('flag_battle_muted');
@@ -35,8 +41,123 @@ class ArcadeAudioEngine {
     return this.ctx;
   }
 
+  private ensureMusicBus(ctx: AudioContext): GainNode {
+    if (!this.musicMasterGain) {
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 950;
+      filter.Q.value = 0.7;
+
+      gain.gain.value = this.getTargetMusicGain();
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      this.musicMasterGain = gain;
+      // Store filter reference on gain node for scheduling
+      (gain as unknown as { _filter: BiquadFilterNode })._filter = filter;
+    }
+    return this.musicMasterGain;
+  }
+
+  private getTargetMusicGain(): number {
+    if (this.muted || !this.musicEnabled) return 0.0001;
+    const base = this.volume * 0.42;
+    return this.musicDucked ? base * 0.48 : base;
+  }
+
+  private updateMusicGain(): void {
+    if (!this.ctx || !this.musicMasterGain) return;
+    const now = this.ctx.currentTime;
+    const target = this.getTargetMusicGain();
+    this.musicMasterGain.gain.cancelScheduledValues(now);
+    this.musicMasterGain.gain.setTargetAtTime(target, now, 0.18);
+  }
+
   public unlock(): void {
     this.ensureContext();
+  }
+
+  public startBackgroundMusic(): void {
+    this.musicEnabled = true;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    this.ensureMusicBus(ctx);
+    this.updateMusicGain();
+
+    if (this.musicTimer !== null) return;
+
+    // Soft ambient chill progression: Fmaj7 -> G6 -> Em7 -> Am7
+    const chords = [
+      [174.61, 220.0, 261.63, 329.63], // Fmaj7
+      [196.0, 246.94, 293.66, 329.63], // G6
+      [164.81, 196.0, 246.94, 293.66], // Em7
+      [220.0, 261.63, 329.63, 392.0], // Am7
+    ];
+    const melody = [
+      523.25, 0, 659.25, 587.33, 523.25, 0, 440.0, 493.88,
+      587.33, 0, 659.25, 783.99, 659.25, 0, 523.25, 440.0,
+    ];
+
+    const tick = () => {
+      if (this.muted || !this.musicEnabled) return;
+      const activeCtx = this.ensureContext();
+      if (!activeCtx) return;
+
+      const bus = this.ensureMusicBus(activeCtx);
+      const filter = (bus as unknown as { _filter: BiquadFilterNode })._filter;
+      const now = activeCtx.currentTime;
+      const step = this.musicStep % 16;
+
+      // Soft warm pad chord every 4 steps (~2.6s)
+      if (step % 4 === 0) {
+        const chordIdx = Math.floor(step / 4) % chords.length;
+        const notes = chords[chordIdx];
+        for (let i = 0; i < notes.length; i++) {
+          const osc = activeCtx.createOscillator();
+          const g = activeCtx.createGain();
+          osc.type = i === 0 ? 'triangle' : 'sine';
+          osc.frequency.setValueAtTime(notes[i], now);
+
+          g.gain.setValueAtTime(0.0001, now);
+          g.gain.linearRampToValueAtTime(0.055, now + 0.55);
+          g.gain.exponentialRampToValueAtTime(0.0001, now + 2.55);
+
+          osc.connect(g);
+          g.connect(filter);
+          osc.start(now);
+          osc.stop(now + 2.6);
+        }
+      }
+
+      // Soft gentle bell/pluck note
+      const melFreq = melody[step];
+      if (melFreq > 0) {
+        const osc = activeCtx.createOscillator();
+        const g = activeCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(melFreq, now);
+
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.linearRampToValueAtTime(0.042, now + 0.04);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.62);
+
+        osc.connect(g);
+        g.connect(filter);
+        osc.start(now);
+        osc.stop(now + 0.65);
+      }
+
+      this.musicStep = (this.musicStep + 1) % 16;
+    };
+
+    tick();
+    this.musicTimer = window.setInterval(tick, 650);
+  }
+
+  public setMusicDucked(ducked: boolean): void {
+    this.musicDucked = ducked;
+    this.updateMusicGain();
   }
 
   public isMuted(): boolean {
@@ -54,6 +175,10 @@ class ArcadeAudioEngine {
     } catch {
       // Ignore
     }
+    this.updateMusicGain();
+    if (!next && this.musicEnabled) {
+      this.startBackgroundMusic();
+    }
   }
 
   public setVolume(next: number): void {
@@ -63,6 +188,7 @@ class ArcadeAudioEngine {
     } catch {
       // Ignore
     }
+    this.updateMusicGain();
   }
 
   private tone(
@@ -94,30 +220,30 @@ class ArcadeAudioEngine {
 
   public playBounce(intensity = 0.6): void {
     const now = performance.now();
-    if (now - this.lastBounceTime < 55) return;
+    if (now - this.lastBounceTime < 70) return;
     this.lastBounceTime = now;
-    const base = 260 + Math.min(1, intensity) * 220;
-    this.tone(base, base * 0.72, 0.045, 'triangle', 0.11);
+    const base = 290 + Math.min(1, intensity) * 210;
+    this.tone(base, base * 1.18, 0.055, 'sine', 0.095);
   }
 
   public playBladeHit(): void {
-    this.tone(840, 310, 0.09, 'sawtooth', 0.18);
+    this.tone(840, 310, 0.09, 'sawtooth', 0.16);
   }
 
   public playShieldBlock(): void {
-    this.tone(520, 980, 0.14, 'sine', 0.22);
+    this.tone(520, 980, 0.14, 'sine', 0.2);
   }
 
   public playElimination(): void {
-    this.tone(360, 85, 0.28, 'sawtooth', 0.26);
+    this.tone(360, 85, 0.28, 'sawtooth', 0.22);
   }
 
   public playBoost(): void {
-    this.tone(440, 880, 0.14, 'triangle', 0.2);
+    this.tone(440, 880, 0.14, 'triangle', 0.18);
   }
 
   public playShockwave(): void {
-    this.tone(180, 720, 0.24, 'sawtooth', 0.24);
+    this.tone(180, 720, 0.24, 'sawtooth', 0.22);
   }
 
   public playChampion(): void {

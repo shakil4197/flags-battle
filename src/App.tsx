@@ -76,12 +76,23 @@ export default function App() {
 
   const handleInitialStart = () => {
     arcadeAudio.unlock();
+    arcadeAudio.startBackgroundMusic();
     voiceAnnouncer.setMuted(muted);
     setAliveCodes(teams.A);
     setLastEliminated(null);
     setChampionCode(null);
     setPhase('TEAM_ANNOUNCE');
   };
+
+  // Duck background music softly during spoken announcements
+  useEffect(() => {
+    const isSpeakingPhase =
+      phase === 'TEAM_ANNOUNCE' ||
+      phase === 'TEAM_TOP3_ANNOUNCE' ||
+      phase === 'FINAL_ANNOUNCE' ||
+      phase === 'CHAMPION_CELEBRATION';
+    arcadeAudio.setMusicDucked(isSpeakingPhase);
+  }, [phase]);
 
   // Phase transition automation & professional announcements
   useEffect(() => {
