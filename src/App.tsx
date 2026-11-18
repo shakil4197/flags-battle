@@ -222,30 +222,30 @@ export default function App() {
   const aliveCount = aliveCodes.length > 0 ? aliveCodes.length : totalInRound;
 
   return (
-    <main className="flex min-h-dvh w-full items-center justify-center bg-[#04060B] p-1 sm:p-2 overflow-hidden">
+    <main className="flex min-h-dvh w-full items-center justify-center bg-[#04060B] p-1 overflow-hidden">
       {/* Pure 9:16 Vertical Stage matching sketch */}
       <div
-        className="relative flex flex-col justify-between overflow-hidden rounded-2xl border border-cyan-500/30 bg-[#070A12] px-3 py-2.5 shadow-[0_0_60px_rgba(34,211,238,0.14)]"
+        className="relative flex flex-col justify-between overflow-hidden rounded-2xl border border-cyan-500/30 bg-[#070A12] px-2 py-1.5 shadow-[0_0_60px_rgba(34,211,238,0.14)]"
         style={{
-          width: 'min(96vw, calc(96dvh * 9 / 16))',
-          height: 'min(96dvh, calc(96vw * 16 / 9))',
+          width: 'min(97vw, calc(97dvh * 9 / 16))',
+          height: 'min(97dvh, calc(97vw * 16 / 9))',
         }}
       >
         {/* Subtle radial ambient top glow */}
         <div
-          className="pointer-events-none absolute inset-x-0 top-0 h-44 bg-gradient-to-b from-cyan-500/10 via-transparent to-transparent"
+          className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-cyan-500/10 via-transparent to-transparent"
           aria-hidden="true"
         />
 
-        {/* TOP HEADER & PARTICIPATING FLAGS GRID */}
-        <header className="relative z-10 flex flex-col gap-1.5">
+        {/* COMPACT TOP HEADER & PARTICIPATING FLAGS GRID */}
+        <header className="relative z-10 flex flex-col gap-1">
           <div className="relative flex items-center justify-center">
-            <span className="absolute left-0 font-mono text-[10px] font-semibold tracking-wider text-slate-400 tabular-nums">
+            <span className="absolute left-0 font-mono text-[9.5px] font-semibold tracking-wider text-slate-400 tabular-nums">
               #{tournamentNumber}
             </span>
 
             <h1
-              className={`font-display text-xl sm:text-2xl font-bold tracking-[0.14em] uppercase ${
+              className={`font-display text-base sm:text-lg font-bold tracking-[0.14em] uppercase ${
                 isFinal ? 'text-amber-300' : 'text-white'
               }`}
               style={{ textWrap: 'balance' }}
@@ -253,24 +253,29 @@ export default function App() {
               {headerTitle}
             </h1>
 
-            <div className="absolute right-0 flex items-center gap-1.5">
-              <span className="font-mono text-[11px] font-bold tabular-nums text-cyan-300">
+            <div className="absolute right-0 flex items-center gap-1">
+              {lastEliminated && (phase === 'TEAM_BATTLE' || phase === 'FINAL_BATTLE') && (
+                <span className="hidden sm:inline-block font-mono text-[9px] text-rose-300">
+                  -{lastEliminated}
+                </span>
+              )}
+              <span className="font-mono text-[10px] font-bold tabular-nums text-cyan-300">
                 {aliveCount}/{totalInRound}
               </span>
               <button
                 type="button"
                 onClick={handleToggleMute}
                 aria-label={muted ? 'Unmute announcer and sound' : 'Mute announcer and sound'}
-                className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-700/80 bg-slate-900/80 text-slate-300 transition hover:border-cyan-400/60 hover:text-cyan-300"
+                className="flex h-5 w-5 items-center justify-center rounded border border-slate-700/80 bg-slate-900/80 text-slate-300 transition hover:border-cyan-400/60 hover:text-cyan-300"
               >
-                {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                {muted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
               </button>
             </div>
           </div>
 
-          {/* 50-flag (10x5) or 15-flag (5x3) Participant Grid */}
-          <div className="rounded-xl border border-slate-700/80 bg-[#0B101B]/95 p-1.5">
-            <div className={`grid ${gridColsClass} gap-1 place-items-center`}>
+          {/* Compact 50-flag (10x5) or 15-flag (5x3) Participant Grid */}
+          <div className="rounded-lg border border-slate-700/80 bg-[#0B101B]/95 p-1">
+            <div className={`grid ${gridColsClass} gap-0.5 place-items-center`}>
               {activeRoster.map((code) => {
                 const isAlive = phase === 'AWAITING_START' || aliveSet.has(code);
                 const isTop3Locked =
@@ -283,12 +288,12 @@ export default function App() {
                     className={`relative flex items-center justify-center rounded-full transition-all duration-300 ${
                       isAlive
                         ? isTop3Locked
-                          ? 'scale-110 ring-2 ring-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.55)]'
+                          ? 'scale-110 ring-2 ring-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.55)]'
                           : 'opacity-100 scale-100'
                         : 'opacity-20 grayscale scale-90'
                     }`}
                   >
-                    <FlagBadge code={code} size={isFinal ? 30 : 22} />
+                    <FlagBadge code={code} size={isFinal ? 24 : 16} />
                   </div>
                 );
               })}
@@ -296,8 +301,8 @@ export default function App() {
           </div>
         </header>
 
-        {/* MIDDLE: FLAGS FIGHTING AREA + BROADCAST ANNOUNCEMENT OVERLAYS */}
-        <section className="relative flex-1 min-h-0 flex items-center justify-center my-1">
+        {/* MIDDLE: BIGGER FLAGS FIGHTING AREA + BROADCAST ANNOUNCEMENT OVERLAYS */}
+        <section className="relative flex-1 min-h-0 flex items-center justify-center my-0.5">
           <FlagArenaCanvas
             participants={activeRoster}
             targetSurvivors={isFinal ? 1 : 3}
@@ -307,16 +312,6 @@ export default function App() {
             onEliminated={handleEliminated}
             onRoundComplete={handleRoundComplete}
           />
-
-          {/* Subtle live elimination ticker tucked cleanly under top of arena */}
-          {(phase === 'TEAM_BATTLE' || phase === 'FINAL_BATTLE') && lastEliminated && (
-            <div className="pointer-events-none absolute top-1 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-md border border-rose-500/40 bg-[#0B101B]/90 px-2.5 py-0.5 shadow-lg">
-              <FlagBadge code={lastEliminated} size={14} />
-              <span className="font-mono text-[10px] font-semibold text-rose-300">
-                OUT: {getCountryName(lastEliminated)}
-              </span>
-            </div>
-          )}
 
           {/* INITIAL SINGLE-CLICK START OVERLAY */}
           {phase === 'AWAITING_START' && (

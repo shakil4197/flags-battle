@@ -62,11 +62,11 @@ interface FlagArenaCanvasProps {
   onRoundComplete: (survivorCodes: string[]) => void;
 }
 
-const LOGICAL_W = 520;
-const LOGICAL_H = 440;
+const LOGICAL_W = 500;
+const LOGICAL_H = 500;
 const CX = LOGICAL_W / 2;
 const CY = LOGICAL_H / 2;
-const INITIAL_RING_R = 198;
+const INITIAL_RING_R = 236;
 
 function normalizeAngle(a: number): number {
   let res = a % (Math.PI * 2);
@@ -105,9 +105,10 @@ export function FlagArenaCanvas({
     canvas.height = LOGICAL_H * dpr;
 
     const count = participants.length;
-    const baseRadius = count > 24 ? 12.2 : 18.8;
-    const minSpeed = count > 24 ? 142 : 170;
-    const maxSpeed = count > 24 ? 270 : 305;
+    const baseRadius = count > 24 ? 13 : 19.5;
+    // Deliberately slower, suspenseful pace so matches take ~75-95s (team) / ~45-60s (final)
+    const minSpeed = count > 24 ? 102 : 120;
+    const maxSpeed = count > 24 ? 186 : 215;
 
     const entities: FlagEntity[] = participants.map((code, idx) => {
       const country = COUNTRY_250_MAP[code] || {
@@ -118,13 +119,13 @@ export function FlagArenaCanvas({
       };
 
       const ringRatio = count > 1 ? Math.sqrt((idx + 0.6) / count) : 0;
-      const dist = ringRatio * (INITIAL_RING_R - baseRadius * 2.2);
+      const dist = ringRatio * (INITIAL_RING_R - baseRadius * 2.4);
       const goldenAngle = idx * 2.3999632 + (matchSeed % 17) * 0.37;
       const x = CX + Math.cos(goldenAngle) * dist;
       const y = CY + Math.sin(goldenAngle) * dist;
 
       const velAngle = goldenAngle + Math.PI * 0.58 + (idx % 5) * 0.25;
-      const speed = minSpeed + (idx % 7) * 14;
+      const speed = minSpeed + (idx % 7) * 10;
 
       return {
         code,
@@ -148,14 +149,14 @@ export function FlagArenaCanvas({
       {
         id: 1,
         kind: 'SAW',
-        x: CX + 18,
-        y: CY - 12,
-        r: 13,
+        x: CX + 20,
+        y: CY - 10,
+        r: 14,
         pulse: 0,
       },
     ];
     let nextOrbId = 2;
-    let orbSpawnTimer = 2.6;
+    let orbSpawnTimer = 5.5;
 
     const sparks: Spark[] = [];
     const notices: FloatingNotice[] = [];
@@ -172,7 +173,7 @@ export function FlagArenaCanvas({
     const spawnSparks = (x: number, y: number, color: string, countParticles: number) => {
       for (let i = 0; i < countParticles; i++) {
         const a = (Math.PI * 2 * i) / countParticles + Math.random() * 0.5;
-        const sp = 75 + Math.random() * 195;
+        const sp = 75 + Math.random() * 190;
         sparks.push({
           x,
           y,
@@ -193,7 +194,7 @@ export function FlagArenaCanvas({
       notices.push({
         x: Math.max(48, Math.min(LOGICAL_W - 48, f.x)),
         y: Math.max(30, Math.min(LOGICAL_H - 30, f.y)),
-        vy: -28,
+        vy: -26,
         text: `${labelPrefix} ${f.code}`,
         color: '#FDA4AF',
         life: 1.0,
@@ -216,35 +217,35 @@ export function FlagArenaCanvas({
         if (entities[i].alive) aliveNow++;
       }
 
+      const targetDuration = count > 24 ? 84 : 54;
+      const progress = Math.min(1, elapsed / targetDuration);
+      const gapHalfWidth = roundFinished
+        ? 0
+        : count > 24
+        ? 0.13 + progress * 0.14 + (elapsed > targetDuration ? Math.min(0.35, (elapsed - targetDuration) * 0.03) : 0)
+        : 0.13 + progress * 0.15 + (elapsed > targetDuration ? Math.min(0.35, (elapsed - targetDuration) * 0.035) : 0);
+
       if (isActive && !roundFinished) {
         elapsed += dt;
-        const speedRot = isFinal ? 1.18 : 1.05;
+        const speedRot = isFinal ? 0.92 : 0.82;
         gapAngle = normalizeAngle(gapAngle + speedRot * dt);
 
-        // Calibrated pacing: 45-60s for 50-flag team rounds, 30-42s for 15-flag final
-        const targetDuration = count > 24 ? 52 : 38;
-        const progress = Math.min(1, elapsed / targetDuration);
-        const minRingR = count > 24 ? 132 : 120;
-        currentRingR = INITIAL_RING_R - (INITIAL_RING_R - minRingR) * Math.pow(progress, 1.35);
+        const minRingR = count > 24 ? 174 : 158;
+        currentRingR = INITIAL_RING_R - (INITIAL_RING_R - minRingR) * Math.pow(progress, 1.3);
 
-        const gapHalfWidth =
-          count > 24
-            ? 0.21 + progress * 0.26 + (elapsed > targetDuration ? Math.min(0.32, (elapsed - targetDuration) * 0.04) : 0)
-            : 0.20 + progress * 0.24 + (elapsed > targetDuration ? Math.min(0.32, (elapsed - targetDuration) * 0.045) : 0);
-
-        // Spawn center SAW / SHD orbs like the reference arena
+        // Spawn center SAW / SHD orbs steadily without overwhelming eliminations
         orbSpawnTimer -= dt;
-        if (orbSpawnTimer <= 0 && orbs.length < 2) {
-          orbSpawnTimer = count > 24 ? 3.8 : 3.2;
+        if (orbSpawnTimer <= 0 && orbs.length < 1) {
+          orbSpawnTimer = count > 24 ? 5.8 : 4.8;
           const orbAngle = Math.random() * Math.PI * 2;
-          const orbDist = Math.random() * (currentRingR * 0.42);
-          const kind: OrbKind = Math.random() < 0.65 ? 'SAW' : 'SHD';
+          const orbDist = Math.random() * (currentRingR * 0.38);
+          const kind: OrbKind = Math.random() < 0.5 ? 'SAW' : 'SHD';
           orbs.push({
             id: nextOrbId++,
             kind,
             x: CX + Math.cos(orbAngle) * orbDist,
             y: CY + Math.sin(orbAngle) * orbDist,
-            r: 13,
+            r: 14,
             pulse: 0,
           });
         }
@@ -253,17 +254,15 @@ export function FlagArenaCanvas({
           orbs[i].pulse += dt * 4;
         }
 
-        // Dynamic flag radius scales up slightly as fewer flags remain (matching reference visibility)
         const dynamicR =
           aliveNow <= 8
-            ? 20
+            ? 21
             : aliveNow <= 16
-            ? 17.5
+            ? 18
             : aliveNow <= 28
-            ? 14.8
+            ? 15.5
             : baseRadius;
 
-        // Update velocities & positions
         for (let i = 0; i < entities.length; i++) {
           const f = entities[i];
           if (!f.alive) continue;
@@ -272,7 +271,7 @@ export function FlagArenaCanvas({
           if (f.flash > 0) f.flash = Math.max(0, f.flash - dt * 3);
           if (f.sawTimer > 0) {
             f.sawTimer = Math.max(0, f.sawTimer - dt);
-            f.sawAngle += dt * 7.2;
+            f.sawAngle += dt * 6.4;
           }
           if (f.sawHitCooldown > 0) {
             f.sawHitCooldown = Math.max(0, f.sawHitCooldown - dt);
@@ -284,11 +283,11 @@ export function FlagArenaCanvas({
           const tx = -dy / dist;
           const ty = dx / dist;
 
-          f.vx += tx * 15 * dt + (Math.random() - 0.5) * 44 * dt;
-          f.vy += ty * 15 * dt + (Math.random() - 0.5) * 44 * dt;
+          f.vx += tx * 11 * dt + (Math.random() - 0.5) * 32 * dt;
+          f.vy += ty * 11 * dt + (Math.random() - 0.5) * 32 * dt;
 
-          if (elapsed > targetDuration * 0.85) {
-            const push = (elapsed - targetDuration * 0.85) * 9;
+          if (elapsed > targetDuration * 0.92) {
+            const push = (elapsed - targetDuration * 0.92) * 8;
             f.vx += (dx / dist) * push * dt;
             f.vy += (dy / dist) * push * dt;
           }
@@ -308,14 +307,13 @@ export function FlagArenaCanvas({
           f.trail.push({ x: f.x, y: f.y });
           if (f.trail.length > 4) f.trail.shift();
 
-          // Pickup check against center SAW / SHD orbs
           for (let k = orbs.length - 1; k >= 0; k--) {
             const orb = orbs[k];
             const odx = f.x - orb.x;
             const ody = f.y - orb.y;
             if (odx * odx + ody * ody <= (f.r + orb.r) * (f.r + orb.r)) {
               if (orb.kind === 'SAW') {
-                f.sawTimer = 7.5;
+                f.sawTimer = 5.5;
                 arcadeAudio.playBoost();
                 spawnSparks(orb.x, orb.y, '#F59E0B', 10);
               } else {
@@ -340,11 +338,10 @@ export function FlagArenaCanvas({
             const distSq = dx * dx + dy * dy;
             const minDist = a.r + b.r + 0.8;
 
-            // Check orbiting SAW blade strike
-            const sawReach = a.r + b.r + 9;
+            const sawReach = a.r + b.r + 8;
             if (distSq < sawReach * sawReach) {
               if (a.sawTimer > 0 && a.sawHitCooldown <= 0 && aliveNow > targetSurvivors) {
-                a.sawHitCooldown = 1.6;
+                a.sawHitCooldown = 2.6;
                 if (b.shielded) {
                   b.shielded = false;
                   arcadeAudio.playShieldBlock();
@@ -357,7 +354,7 @@ export function FlagArenaCanvas({
                   continue;
                 }
               } else if (b.sawTimer > 0 && b.sawHitCooldown <= 0 && aliveNow > targetSurvivors) {
-                b.sawHitCooldown = 1.6;
+                b.sawHitCooldown = 2.6;
                 if (a.shielded) {
                   a.shielded = false;
                   arcadeAudio.playShieldBlock();
@@ -386,15 +383,15 @@ export function FlagArenaCanvas({
               const rvy = b.vy - a.vy;
               const velAlongNormal = rvx * nx + rvy * ny;
               if (velAlongNormal < 0) {
-                const impulse = -velAlongNormal * 1.03;
+                const impulse = -velAlongNormal * 1.02;
                 a.vx -= impulse * nx;
                 a.vy -= impulse * ny;
                 b.vx += impulse * nx;
                 b.vy += impulse * ny;
-                if (Math.abs(velAlongNormal) > 130) {
+                if (Math.abs(velAlongNormal) > 110) {
                   a.flash = 0.35;
                   b.flash = 0.35;
-                  if (Math.random() < 0.2) arcadeAudio.playBounce(0.45);
+                  if (Math.random() < 0.18) arcadeAudio.playBounce(0.4);
                 }
               }
             }
@@ -420,7 +417,6 @@ export function FlagArenaCanvas({
             if (inGap && aliveNow > targetSurvivors) {
               if (dist + f.r * 0.4 > currentRingR) {
                 if (f.shielded) {
-                  // Emerald shield saves flag once from the crimson exit gate
                   f.shielded = false;
                   f.x = CX + nx * (currentRingR - f.r - 2);
                   f.y = CY + ny * (currentRingR - f.r - 2);
@@ -431,7 +427,7 @@ export function FlagArenaCanvas({
                   }
                   arcadeAudio.playShieldBlock();
                   spawnSparks(f.x, f.y, '#10B981', 12);
-                } else if (dist > currentRingR + f.r * 0.3) {
+                } else if (dist > currentRingR + f.r * 0.35) {
                   arcadeAudio.playElimination();
                   aliveNow--;
                   eliminateFlag(f, '#F43F5E', 'OUT');
@@ -445,8 +441,8 @@ export function FlagArenaCanvas({
               if (dot > 0) {
                 f.vx -= 2 * dot * nx;
                 f.vy -= 2 * dot * ny;
-                f.vx += -ny * 12;
-                f.vy += nx * 12;
+                f.vx += -ny * 10;
+                f.vy += nx * 10;
               }
             }
           }
@@ -460,7 +456,6 @@ export function FlagArenaCanvas({
         }
       }
 
-      // Update sparks & floating notices
       for (let i = sparks.length - 1; i >= 0; i--) {
         const s = sparks[i];
         s.x += s.vx * dt;
@@ -477,12 +472,11 @@ export function FlagArenaCanvas({
         if (n.life <= 0) notices.splice(i, 1);
       }
 
-      // RENDER ARENA MATCHING REFERENCE SCREENSHOT
       ctx.save();
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, LOGICAL_W, LOGICAL_H);
 
-      // Subtle tactical square grid lines matching reference image
+      // Tactical square grid
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.032)';
       ctx.lineWidth = 1;
       const gridStep = 34;
@@ -499,38 +493,27 @@ export function FlagArenaCanvas({
         ctx.stroke();
       }
 
-      // Deep cyan-black radial glow inside the arena ring
-      const bgGrad = ctx.createRadialGradient(CX, CY, 14, CX, CY, currentRingR + 18);
+      const bgGrad = ctx.createRadialGradient(CX, CY, 16, CX, CY, currentRingR + 12);
       bgGrad.addColorStop(0, 'rgba(6, 78, 92, 0.24)');
       bgGrad.addColorStop(0.75, 'rgba(7, 25, 34, 0.38)');
       bgGrad.addColorStop(1, 'rgba(7, 9, 14, 0)');
       ctx.fillStyle = bgGrad;
       ctx.beginPath();
-      ctx.arc(CX, CY, currentRingR + 18, 0, Math.PI * 2);
+      ctx.arc(CX, CY, currentRingR + 12, 0, Math.PI * 2);
       ctx.fill();
 
-      // Inner concentric radar guide circle matching reference screenshot
       ctx.strokeStyle = 'rgba(34, 211, 238, 0.16)';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.arc(CX, CY, currentRingR * 0.48, 0, Math.PI * 2);
       ctx.stroke();
 
-      // Compute gap arc
-      const progress = Math.min(1, elapsed / (count > 24 ? 52 : 38));
-      const gapHalfWidth = roundFinished
-        ? 0
-        : count > 24
-        ? 0.21 + progress * 0.26 + (elapsed > 52 ? Math.min(0.32, (elapsed - 52) * 0.04) : 0)
-        : 0.20 + progress * 0.24 + (elapsed > 38 ? Math.min(0.32, (elapsed - 38) * 0.045) : 0);
-
-      // Thick glowing cyan circular boundary
       const wallColor = roundFinished ? '#F59E0B' : '#00EAFF';
       const glowColor = roundFinished ? 'rgba(245, 158, 11, 0.55)' : 'rgba(0, 234, 255, 0.55)';
 
       ctx.save();
       ctx.strokeStyle = wallColor;
-      ctx.lineWidth = 5.5;
+      ctx.lineWidth = 6;
       ctx.lineCap = 'round';
       ctx.shadowColor = glowColor;
       ctx.shadowBlur = 14;
@@ -543,11 +526,10 @@ export function FlagArenaCanvas({
       ctx.stroke();
       ctx.restore();
 
-      // Crimson exit gate bar + bright pink/rose endcap circles matching reference screenshot
       if (gapHalfWidth > 0.01 && isActive && !roundFinished) {
         ctx.save();
-        ctx.strokeStyle = 'rgba(136, 19, 55, 0.72)';
-        ctx.lineWidth = 7;
+        ctx.strokeStyle = 'rgba(136, 19, 55, 0.75)';
+        ctx.lineWidth = 7.5;
         ctx.lineCap = 'butt';
         ctx.beginPath();
         ctx.arc(CX, CY, currentRingR, gapAngle - gapHalfWidth, gapAngle + gapHalfWidth);
@@ -561,13 +543,12 @@ export function FlagArenaCanvas({
         ctx.shadowColor = 'rgba(251, 55, 104, 0.75)';
         ctx.shadowBlur = 8;
         ctx.beginPath();
-        ctx.arc(p1x, p1y, 5, 0, Math.PI * 2);
-        ctx.arc(p2x, p2y, 5, 0, Math.PI * 2);
+        ctx.arc(p1x, p1y, 5.2, 0, Math.PI * 2);
+        ctx.arc(p2x, p2y, 5.2, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       }
 
-      // Render center arena pickup orbs (SAW / SHD)
       if (isActive && !roundFinished) {
         for (let i = 0; i < orbs.length; i++) {
           const orb = orbs[i];
@@ -589,7 +570,7 @@ export function FlagArenaCanvas({
 
           ctx.shadowBlur = 0;
           ctx.fillStyle = '#FFFFFF';
-          ctx.font = '800 8px "JetBrains Mono", monospace';
+          ctx.font = '800 8.5px "JetBrains Mono", monospace';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(orb.kind, orb.x, orb.y + 0.5);
@@ -597,7 +578,6 @@ export function FlagArenaCanvas({
         }
       }
 
-      // Render surviving flags, emerald shields, orbiting saw blades, and pill code badges
       const showCodeBadges = aliveNow <= 24;
       for (let i = 0; i < entities.length; i++) {
         const f = entities[i];
@@ -605,7 +585,7 @@ export function FlagArenaCanvas({
 
         if (isActive && f.trail.length > 1) {
           for (let t = 0; t < f.trail.length - 1; t++) {
-            const alpha = ((t + 1) / f.trail.length) * 0.16;
+            const alpha = ((t + 1) / f.trail.length) * 0.14;
             ctx.fillStyle = roundFinished ? `rgba(251, 191, 36, ${alpha})` : `rgba(34, 211, 238, ${alpha})`;
             ctx.beginPath();
             ctx.arc(f.trail[t].x, f.trail[t].y, f.r * 0.42, 0, Math.PI * 2);
@@ -615,11 +595,10 @@ export function FlagArenaCanvas({
 
         drawCountryFlagCircle(ctx, f.country, f.x, f.y, f.r);
 
-        // Shielded emerald outer ring (matching JPN in screenshot) or white/gold rim
         ctx.save();
         if (f.shielded) {
           ctx.beginPath();
-          ctx.arc(f.x, f.y, f.r + 2.6, 0, Math.PI * 2);
+          ctx.arc(f.x, f.y, f.r + 2.8, 0, Math.PI * 2);
           ctx.strokeStyle = '#10B981';
           ctx.shadowColor = 'rgba(16, 185, 129, 0.75)';
           ctx.shadowBlur = 10;
@@ -642,7 +621,6 @@ export function FlagArenaCanvas({
         ctx.stroke();
         ctx.restore();
 
-        // Orbiting spinning SAW blade
         if (f.sawTimer > 0 && isActive && !roundFinished) {
           const sx = f.x + Math.cos(f.sawAngle) * (f.r + 7.5);
           const sy = f.y + Math.sin(f.sawAngle) * (f.r + 7.5);
@@ -666,7 +644,6 @@ export function FlagArenaCanvas({
           ctx.restore();
         }
 
-        // Crisp dark pill code label underneath flag (like CAN, AUS, JPN, MEX in screenshot)
         if (showCodeBadges) {
           ctx.save();
           ctx.font = '700 8px "JetBrains Mono", monospace';
@@ -683,7 +660,6 @@ export function FlagArenaCanvas({
         }
       }
 
-      // Sparks
       for (let i = 0; i < sparks.length; i++) {
         const s = sparks[i];
         ctx.globalAlpha = Math.max(0, s.life / s.maxLife);
@@ -694,7 +670,6 @@ export function FlagArenaCanvas({
       }
       ctx.globalAlpha = 1;
 
-      // Floating elimination notices
       for (let i = 0; i < notices.length; i++) {
         const n = notices[i];
         ctx.globalAlpha = Math.max(0, n.life / n.maxLife);
