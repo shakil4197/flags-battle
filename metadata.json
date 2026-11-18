@@ -1,0 +1,6 @@
+{
+  "name": "Cyber-Arena Overdrive",
+  "description": "A live viewer-interactive 2D neon cyber-arcade survival shooter with OBS-friendly fullscreen stage mode and real-time WebSocket audience controls for Gaming & Esports YouTube livestreams.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

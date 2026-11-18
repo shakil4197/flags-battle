@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <script>
+      (function () {
+        try {
+          var own = Object.getOwnPropertyDescriptor(window, 'fetch');
+          if (own && own.get && !own.set && own.configurable) {
+            var override = null;
+            var origGet = own.get;
+            Object.defineProperty(window, 'fetch', {
+              configurable: true,
+              enumerable: own.enumerable,
+              get: function () {
+                return override || origGet.call(window);
+              },
+              set: function (val) {
+                if (typeof val === 'function') override = val;
+              },
+            });
+          } else if (!own && typeof Window !== 'undefined' && Window.prototype) {
+            var proto = Object.getOwnPropertyDescriptor(Window.prototype, 'fetch');
+            if (proto && proto.get && !proto.set) {
+              var protoOverride = null;
+              var protoGet = proto.get;
+              Object.defineProperty(window, 'fetch', {
+                configurable: true,
+                enumerable: true,
+                get: function () {
+                  return protoOverride || protoGet.call(window);
+                },
+                set: function (val) {
+                  if (typeof val === 'function') protoOverride = val;
+                },
+              });
+            }
+          }
+        } catch (_e) {}
+
+        window.addEventListener(
+          'error',
+          function (ev) {
+            if (ev && typeof ev.filename === 'string' && ev.filename.indexOf('chrome-extension://') === 0) {
+              ev.preventDefault();
+            }
+          },
+          true
+        );
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>250 Flag Battle Tournament — Live 9:16 Stream Arena</title>
+    <meta name="description" content="Automated 250-country Flag Battle Tournament in 9:16 vertical stream mode. Five teams of 50 battle down to Top 3 finalists each, leading into an automated 15-flag Grand Final loop." />
+    <meta property="og:title" content="250 Flag Battle Tournament" />
+    <meta property="og:description" content="Automated 250-country Flag Battle Tournament in 9:16 vertical mode for live streams." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-[#07090E] text-slate-100 antialiased selection:bg-cyan-400/30 selection:text-cyan-100">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,723 @@
+import { useEffect, useRef } from 'react';
+import { arcadeAudio } from '../audio/arcadeAudio';
+import { COUNTRY_250_MAP, type CountryDef } from '../data/flags250';
+import { drawCountryFlagCircle } from './canvasFlagDraw';
+
+type OrbKind = 'SAW' | 'SHD';
+
+interface FlagEntity {
+  code: string;
+  country: CountryDef;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  r: number;
+  alive: boolean;
+  flash: number;
+  shielded: boolean;
+  sawTimer: number;
+  sawAngle: number;
+  sawHitCooldown: number;
+  trail: Array<{ x: number; y: number }>;
+}
+
+interface ArenaOrb {
+  id: number;
+  kind: OrbKind;
+  x: number;
+  y: number;
+  r: number;
+  pulse: number;
+}
+
+interface Spark {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  color: string;
+  size: number;
+}
+
+interface FloatingNotice {
+  x: number;
+  y: number;
+  vy: number;
+  text: string;
+  color: string;
+  life: number;
+  maxLife: number;
+}
+
+interface FlagArenaCanvasProps {
+  participants: string[];
+  targetSurvivors: number;
+  matchSeed: number;
+  isActive: boolean;
+  isFinal: boolean;
+  onEliminated: (aliveCodes: string[], eliminatedCode: string) => void;
+  onRoundComplete: (survivorCodes: string[]) => void;
+}
+
+const LOGICAL_W = 520;
+const LOGICAL_H = 440;
+const CX = LOGICAL_W / 2;
+const CY = LOGICAL_H / 2;
+const INITIAL_RING_R = 198;
+
+function normalizeAngle(a: number): number {
+  let res = a % (Math.PI * 2);
+  if (res < 0) res += Math.PI * 2;
+  return res;
+}
+
+function isAngleInGap(angle: number, gapCenter: number, gapHalfWidth: number): boolean {
+  const diff = Math.abs(normalizeAngle(angle - gapCenter + Math.PI) - Math.PI);
+  return diff <= gapHalfWidth;
+}
+
+export function FlagArenaCanvas({
+  participants,
+  targetSurvivors,
+  matchSeed,
+  isActive,
+  isFinal,
+  onEliminated,
+  onRoundComplete,
+}: FlagArenaCanvasProps) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const onEliminatedRef = useRef(onEliminated);
+  const onRoundCompleteRef = useRef(onRoundComplete);
+  onEliminatedRef.current = onEliminated;
+  onRoundCompleteRef.current = onRoundComplete;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = LOGICAL_W * dpr;
+    canvas.height = LOGICAL_H * dpr;
+
+    const count = participants.length;
+    const baseRadius = count > 24 ? 12.2 : 18.8;
+    const minSpeed = count > 24 ? 142 : 170;
+    const maxSpeed = count > 24 ? 270 : 305;
+
+    const entities: FlagEntity[] = participants.map((code, idx) => {
+      const country = COUNTRY_250_MAP[code] || {
+        code,
+        name: code,
+        pattern: 'h_bicolor' as const,
+        colors: ['#22D3EE', '#0F172A'],
+      };
+
+      const ringRatio = count > 1 ? Math.sqrt((idx + 0.6) / count) : 0;
+      const dist = ringRatio * (INITIAL_RING_R - baseRadius * 2.2);
+      const goldenAngle = idx * 2.3999632 + (matchSeed % 17) * 0.37;
+      const x = CX + Math.cos(goldenAngle) * dist;
+      const y = CY + Math.sin(goldenAngle) * dist;
+
+      const velAngle = goldenAngle + Math.PI * 0.58 + (idx % 5) * 0.25;
+      const speed = minSpeed + (idx % 7) * 14;
+
+      return {
+        code,
+        country,
+        x,
+        y,
+        vx: Math.cos(velAngle) * speed,
+        vy: Math.sin(velAngle) * speed,
+        r: baseRadius,
+        alive: true,
+        flash: 0,
+        shielded: false,
+        sawTimer: 0,
+        sawAngle: (idx * 1.1) % (Math.PI * 2),
+        sawHitCooldown: 0,
+        trail: [],
+      };
+    });
+
+    const orbs: ArenaOrb[] = [
+      {
+        id: 1,
+        kind: 'SAW',
+        x: CX + 18,
+        y: CY - 12,
+        r: 13,
+        pulse: 0,
+      },
+    ];
+    let nextOrbId = 2;
+    let orbSpawnTimer = 2.6;
+
+    const sparks: Spark[] = [];
+    const notices: FloatingNotice[] = [];
+
+    let gapAngle = -Math.PI / 2;
+    let currentRingR = INITIAL_RING_R;
+    let elapsed = 0;
+    let roundFinished = false;
+    let completeTimer = 0;
+    let completeFired = false;
+    let lastTime = performance.now();
+    let rafId = 0;
+
+    const spawnSparks = (x: number, y: number, color: string, countParticles: number) => {
+      for (let i = 0; i < countParticles; i++) {
+        const a = (Math.PI * 2 * i) / countParticles + Math.random() * 0.5;
+        const sp = 75 + Math.random() * 195;
+        sparks.push({
+          x,
+          y,
+          vx: Math.cos(a) * sp,
+          vy: Math.sin(a) * sp,
+          life: 0.45 + Math.random() * 0.25,
+          maxLife: 0.7,
+          color,
+          size: 2 + Math.random() * 2.5,
+        });
+      }
+    };
+
+    const eliminateFlag = (f: FlagEntity, reasonColor: string, labelPrefix: string) => {
+      if (!f.alive) return;
+      f.alive = false;
+      spawnSparks(f.x, f.y, reasonColor, 14);
+      notices.push({
+        x: Math.max(48, Math.min(LOGICAL_W - 48, f.x)),
+        y: Math.max(30, Math.min(LOGICAL_H - 30, f.y)),
+        vy: -28,
+        text: `${labelPrefix} ${f.code}`,
+        color: '#FDA4AF',
+        life: 1.0,
+        maxLife: 1.0,
+      });
+
+      const remaining = entities.filter((e) => e.alive).map((e) => e.code);
+      onEliminatedRef.current(remaining, f.code);
+      if (remaining.length <= targetSurvivors) {
+        roundFinished = true;
+      }
+    };
+
+    const step = (now: number) => {
+      const dt = Math.min(0.032, Math.max(0.004, (now - lastTime) / 1000));
+      lastTime = now;
+
+      let aliveNow = 0;
+      for (let i = 0; i < entities.length; i++) {
+        if (entities[i].alive) aliveNow++;
+      }
+
+      if (isActive && !roundFinished) {
+        elapsed += dt;
+        const speedRot = isFinal ? 1.18 : 1.05;
+        gapAngle = normalizeAngle(gapAngle + speedRot * dt);
+
+        // Calibrated pacing: 45-60s for 50-flag team rounds, 30-42s for 15-flag final
+        const targetDuration = count > 24 ? 52 : 38;
+        const progress = Math.min(1, elapsed / targetDuration);
+        const minRingR = count > 24 ? 132 : 120;
+        currentRingR = INITIAL_RING_R - (INITIAL_RING_R - minRingR) * Math.pow(progress, 1.35);
+
+        const gapHalfWidth =
+          count > 24
+            ? 0.21 + progress * 0.26 + (elapsed > targetDuration ? Math.min(0.32, (elapsed - targetDuration) * 0.04) : 0)
+            : 0.20 + progress * 0.24 + (elapsed > targetDuration ? Math.min(0.32, (elapsed - targetDuration) * 0.045) : 0);
+
+        // Spawn center SAW / SHD orbs like the reference arena
+        orbSpawnTimer -= dt;
+        if (orbSpawnTimer <= 0 && orbs.length < 2) {
+          orbSpawnTimer = count > 24 ? 3.8 : 3.2;
+          const orbAngle = Math.random() * Math.PI * 2;
+          const orbDist = Math.random() * (currentRingR * 0.42);
+          const kind: OrbKind = Math.random() < 0.65 ? 'SAW' : 'SHD';
+          orbs.push({
+            id: nextOrbId++,
+            kind,
+            x: CX + Math.cos(orbAngle) * orbDist,
+            y: CY + Math.sin(orbAngle) * orbDist,
+            r: 13,
+            pulse: 0,
+          });
+        }
+
+        for (let i = 0; i < orbs.length; i++) {
+          orbs[i].pulse += dt * 4;
+        }
+
+        // Dynamic flag radius scales up slightly as fewer flags remain (matching reference visibility)
+        const dynamicR =
+          aliveNow <= 8
+            ? 20
+            : aliveNow <= 16
+            ? 17.5
+            : aliveNow <= 28
+            ? 14.8
+            : baseRadius;
+
+        // Update velocities & positions
+        for (let i = 0; i < entities.length; i++) {
+          const f = entities[i];
+          if (!f.alive) continue;
+
+          f.r += (dynamicR - f.r) * Math.min(1, dt * 4);
+          if (f.flash > 0) f.flash = Math.max(0, f.flash - dt * 3);
+          if (f.sawTimer > 0) {
+            f.sawTimer = Math.max(0, f.sawTimer - dt);
+            f.sawAngle += dt * 7.2;
+          }
+          if (f.sawHitCooldown > 0) {
+            f.sawHitCooldown = Math.max(0, f.sawHitCooldown - dt);
+          }
+
+          const dx = f.x - CX;
+          const dy = f.y - CY;
+          const dist = Math.hypot(dx, dy) || 1;
+          const tx = -dy / dist;
+          const ty = dx / dist;
+
+          f.vx += tx * 15 * dt + (Math.random() - 0.5) * 44 * dt;
+          f.vy += ty * 15 * dt + (Math.random() - 0.5) * 44 * dt;
+
+          if (elapsed > targetDuration * 0.85) {
+            const push = (elapsed - targetDuration * 0.85) * 9;
+            f.vx += (dx / dist) * push * dt;
+            f.vy += (dy / dist) * push * dt;
+          }
+
+          const sp = Math.hypot(f.vx, f.vy) || 1;
+          if (sp < minSpeed) {
+            f.vx = (f.vx / sp) * minSpeed;
+            f.vy = (f.vy / sp) * minSpeed;
+          } else if (sp > maxSpeed) {
+            f.vx = (f.vx / sp) * maxSpeed;
+            f.vy = (f.vy / sp) * maxSpeed;
+          }
+
+          f.x += f.vx * dt;
+          f.y += f.vy * dt;
+
+          f.trail.push({ x: f.x, y: f.y });
+          if (f.trail.length > 4) f.trail.shift();
+
+          // Pickup check against center SAW / SHD orbs
+          for (let k = orbs.length - 1; k >= 0; k--) {
+            const orb = orbs[k];
+            const odx = f.x - orb.x;
+            const ody = f.y - orb.y;
+            if (odx * odx + ody * ody <= (f.r + orb.r) * (f.r + orb.r)) {
+              if (orb.kind === 'SAW') {
+                f.sawTimer = 7.5;
+                arcadeAudio.playBoost();
+                spawnSparks(orb.x, orb.y, '#F59E0B', 10);
+              } else {
+                f.shielded = true;
+                arcadeAudio.playShieldBlock();
+                spawnSparks(orb.x, orb.y, '#10B981', 10);
+              }
+              orbs.splice(k, 1);
+            }
+          }
+        }
+
+        // Elastic flag-to-flag collisions + orbiting SAW blade combat
+        for (let i = 0; i < entities.length; i++) {
+          const a = entities[i];
+          if (!a.alive) continue;
+          for (let j = i + 1; j < entities.length; j++) {
+            const b = entities[j];
+            if (!b.alive) continue;
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const distSq = dx * dx + dy * dy;
+            const minDist = a.r + b.r + 0.8;
+
+            // Check orbiting SAW blade strike
+            const sawReach = a.r + b.r + 9;
+            if (distSq < sawReach * sawReach) {
+              if (a.sawTimer > 0 && a.sawHitCooldown <= 0 && aliveNow > targetSurvivors) {
+                a.sawHitCooldown = 1.6;
+                if (b.shielded) {
+                  b.shielded = false;
+                  arcadeAudio.playShieldBlock();
+                  spawnSparks(b.x, b.y, '#10B981', 10);
+                } else {
+                  arcadeAudio.playBladeHit();
+                  aliveNow--;
+                  eliminateFlag(b, '#F59E0B', 'SAW');
+                  if (roundFinished) break;
+                  continue;
+                }
+              } else if (b.sawTimer > 0 && b.sawHitCooldown <= 0 && aliveNow > targetSurvivors) {
+                b.sawHitCooldown = 1.6;
+                if (a.shielded) {
+                  a.shielded = false;
+                  arcadeAudio.playShieldBlock();
+                  spawnSparks(a.x, a.y, '#10B981', 10);
+                } else {
+                  arcadeAudio.playBladeHit();
+                  aliveNow--;
+                  eliminateFlag(a, '#F59E0B', 'SAW');
+                  if (roundFinished) break;
+                  break;
+                }
+              }
+            }
+
+            if (distSq < minDist * minDist && distSq > 0.0001) {
+              const dist = Math.sqrt(distSq);
+              const nx = dx / dist;
+              const ny = dy / dist;
+              const overlap = (minDist - dist) * 0.5;
+              a.x -= nx * overlap;
+              a.y -= ny * overlap;
+              b.x += nx * overlap;
+              b.y += ny * overlap;
+
+              const rvx = b.vx - a.vx;
+              const rvy = b.vy - a.vy;
+              const velAlongNormal = rvx * nx + rvy * ny;
+              if (velAlongNormal < 0) {
+                const impulse = -velAlongNormal * 1.03;
+                a.vx -= impulse * nx;
+                a.vy -= impulse * ny;
+                b.vx += impulse * nx;
+                b.vy += impulse * ny;
+                if (Math.abs(velAlongNormal) > 130) {
+                  a.flash = 0.35;
+                  b.flash = 0.35;
+                  if (Math.random() < 0.2) arcadeAudio.playBounce(0.45);
+                }
+              }
+            }
+          }
+          if (roundFinished) break;
+        }
+
+        // Ring boundary & rotating crimson exit gate check
+        if (!roundFinished) {
+          for (let i = 0; i < entities.length; i++) {
+            const f = entities[i];
+            if (!f.alive) continue;
+
+            const dx = f.x - CX;
+            const dy = f.y - CY;
+            const dist = Math.hypot(dx, dy) || 1;
+            const nx = dx / dist;
+            const ny = dy / dist;
+            const angle = Math.atan2(dy, dx);
+
+            const inGap = isAngleInGap(angle, gapAngle, gapHalfWidth);
+
+            if (inGap && aliveNow > targetSurvivors) {
+              if (dist + f.r * 0.4 > currentRingR) {
+                if (f.shielded) {
+                  // Emerald shield saves flag once from the crimson exit gate
+                  f.shielded = false;
+                  f.x = CX + nx * (currentRingR - f.r - 2);
+                  f.y = CY + ny * (currentRingR - f.r - 2);
+                  const dot = f.vx * nx + f.vy * ny;
+                  if (dot > 0) {
+                    f.vx -= 2 * dot * nx;
+                    f.vy -= 2 * dot * ny;
+                  }
+                  arcadeAudio.playShieldBlock();
+                  spawnSparks(f.x, f.y, '#10B981', 12);
+                } else if (dist > currentRingR + f.r * 0.3) {
+                  arcadeAudio.playElimination();
+                  aliveNow--;
+                  eliminateFlag(f, '#F43F5E', 'OUT');
+                  if (roundFinished) break;
+                }
+              }
+            } else if (dist + f.r > currentRingR) {
+              f.x = CX + nx * (currentRingR - f.r - 0.5);
+              f.y = CY + ny * (currentRingR - f.r - 0.5);
+              const dot = f.vx * nx + f.vy * ny;
+              if (dot > 0) {
+                f.vx -= 2 * dot * nx;
+                f.vy -= 2 * dot * ny;
+                f.vx += -ny * 12;
+                f.vy += nx * 12;
+              }
+            }
+          }
+        }
+      } else if (roundFinished && !completeFired) {
+        completeTimer += dt;
+        if (completeTimer >= 0.7) {
+          completeFired = true;
+          const survivors = entities.filter((e) => e.alive).map((e) => e.code);
+          onRoundCompleteRef.current(survivors);
+        }
+      }
+
+      // Update sparks & floating notices
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const s = sparks[i];
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        s.vx *= 0.94;
+        s.vy *= 0.94;
+        s.life -= dt;
+        if (s.life <= 0) sparks.splice(i, 1);
+      }
+      for (let i = notices.length - 1; i >= 0; i--) {
+        const n = notices[i];
+        n.y += n.vy * dt;
+        n.life -= dt;
+        if (n.life <= 0) notices.splice(i, 1);
+      }
+
+      // RENDER ARENA MATCHING REFERENCE SCREENSHOT
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+      // Subtle tactical square grid lines matching reference image
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.032)';
+      ctx.lineWidth = 1;
+      const gridStep = 34;
+      for (let gx = (LOGICAL_W % gridStep) / 2; gx < LOGICAL_W; gx += gridStep) {
+        ctx.beginPath();
+        ctx.moveTo(gx, 0);
+        ctx.lineTo(gx, LOGICAL_H);
+        ctx.stroke();
+      }
+      for (let gy = (LOGICAL_H % gridStep) / 2; gy < LOGICAL_H; gy += gridStep) {
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        ctx.lineTo(LOGICAL_W, gy);
+        ctx.stroke();
+      }
+
+      // Deep cyan-black radial glow inside the arena ring
+      const bgGrad = ctx.createRadialGradient(CX, CY, 14, CX, CY, currentRingR + 18);
+      bgGrad.addColorStop(0, 'rgba(6, 78, 92, 0.24)');
+      bgGrad.addColorStop(0.75, 'rgba(7, 25, 34, 0.38)');
+      bgGrad.addColorStop(1, 'rgba(7, 9, 14, 0)');
+      ctx.fillStyle = bgGrad;
+      ctx.beginPath();
+      ctx.arc(CX, CY, currentRingR + 18, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Inner concentric radar guide circle matching reference screenshot
+      ctx.strokeStyle = 'rgba(34, 211, 238, 0.16)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(CX, CY, currentRingR * 0.48, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Compute gap arc
+      const progress = Math.min(1, elapsed / (count > 24 ? 52 : 38));
+      const gapHalfWidth = roundFinished
+        ? 0
+        : count > 24
+        ? 0.21 + progress * 0.26 + (elapsed > 52 ? Math.min(0.32, (elapsed - 52) * 0.04) : 0)
+        : 0.20 + progress * 0.24 + (elapsed > 38 ? Math.min(0.32, (elapsed - 38) * 0.045) : 0);
+
+      // Thick glowing cyan circular boundary
+      const wallColor = roundFinished ? '#F59E0B' : '#00EAFF';
+      const glowColor = roundFinished ? 'rgba(245, 158, 11, 0.55)' : 'rgba(0, 234, 255, 0.55)';
+
+      ctx.save();
+      ctx.strokeStyle = wallColor;
+      ctx.lineWidth = 5.5;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = glowColor;
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      if (gapHalfWidth <= 0.001) {
+        ctx.arc(CX, CY, currentRingR, 0, Math.PI * 2);
+      } else {
+        ctx.arc(CX, CY, currentRingR, gapAngle + gapHalfWidth, gapAngle + Math.PI * 2 - gapHalfWidth);
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      // Crimson exit gate bar + bright pink/rose endcap circles matching reference screenshot
+      if (gapHalfWidth > 0.01 && isActive && !roundFinished) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(136, 19, 55, 0.72)';
+        ctx.lineWidth = 7;
+        ctx.lineCap = 'butt';
+        ctx.beginPath();
+        ctx.arc(CX, CY, currentRingR, gapAngle - gapHalfWidth, gapAngle + gapHalfWidth);
+        ctx.stroke();
+
+        const p1x = CX + Math.cos(gapAngle - gapHalfWidth) * currentRingR;
+        const p1y = CY + Math.sin(gapAngle - gapHalfWidth) * currentRingR;
+        const p2x = CX + Math.cos(gapAngle + gapHalfWidth) * currentRingR;
+        const p2y = CY + Math.sin(gapAngle + gapHalfWidth) * currentRingR;
+        ctx.fillStyle = '#FB3768';
+        ctx.shadowColor = 'rgba(251, 55, 104, 0.75)';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(p1x, p1y, 5, 0, Math.PI * 2);
+        ctx.arc(p2x, p2y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Render center arena pickup orbs (SAW / SHD)
+      if (isActive && !roundFinished) {
+        for (let i = 0; i < orbs.length; i++) {
+          const orb = orbs[i];
+          const isSaw = orb.kind === 'SAW';
+          const borderCol = isSaw ? '#F59E0B' : '#10B981';
+          const fillCol = isSaw ? 'rgba(120, 53, 15, 0.85)' : 'rgba(6, 78, 59, 0.85)';
+          const pulseR = orb.r + Math.sin(orb.pulse) * 1.1;
+
+          ctx.save();
+          ctx.shadowColor = borderCol;
+          ctx.shadowBlur = 12;
+          ctx.fillStyle = fillCol;
+          ctx.strokeStyle = borderCol;
+          ctx.lineWidth = 2.2;
+          ctx.beginPath();
+          ctx.arc(orb.x, orb.y, pulseR, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = '800 8px "JetBrains Mono", monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(orb.kind, orb.x, orb.y + 0.5);
+          ctx.restore();
+        }
+      }
+
+      // Render surviving flags, emerald shields, orbiting saw blades, and pill code badges
+      const showCodeBadges = aliveNow <= 24;
+      for (let i = 0; i < entities.length; i++) {
+        const f = entities[i];
+        if (!f.alive) continue;
+
+        if (isActive && f.trail.length > 1) {
+          for (let t = 0; t < f.trail.length - 1; t++) {
+            const alpha = ((t + 1) / f.trail.length) * 0.16;
+            ctx.fillStyle = roundFinished ? `rgba(251, 191, 36, ${alpha})` : `rgba(34, 211, 238, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(f.trail[t].x, f.trail[t].y, f.r * 0.42, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        drawCountryFlagCircle(ctx, f.country, f.x, f.y, f.r);
+
+        // Shielded emerald outer ring (matching JPN in screenshot) or white/gold rim
+        ctx.save();
+        if (f.shielded) {
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, f.r + 2.6, 0, Math.PI * 2);
+          ctx.strokeStyle = '#10B981';
+          ctx.shadowColor = 'rgba(16, 185, 129, 0.75)';
+          ctx.shadowBlur = 10;
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        }
+
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+        if (roundFinished) {
+          ctx.strokeStyle = '#FBBF24';
+          ctx.lineWidth = 2.6;
+        } else if (f.flash > 0) {
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 2.2;
+        } else {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+          ctx.lineWidth = 1.4;
+        }
+        ctx.stroke();
+        ctx.restore();
+
+        // Orbiting spinning SAW blade
+        if (f.sawTimer > 0 && isActive && !roundFinished) {
+          const sx = f.x + Math.cos(f.sawAngle) * (f.r + 7.5);
+          const sy = f.y + Math.sin(f.sawAngle) * (f.r + 7.5);
+          ctx.save();
+          ctx.translate(sx, sy);
+          ctx.rotate(f.sawAngle * 2.5);
+          ctx.fillStyle = '#F59E0B';
+          ctx.strokeStyle = '#FEF3C7';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          for (let t = 0; t < 8; t++) {
+            const a = (Math.PI * 2 * t) / 8;
+            const rOut = 6.5;
+            const rIn = 3.6;
+            ctx.lineTo(Math.cos(a) * rOut, Math.sin(a) * rOut);
+            ctx.lineTo(Math.cos(a + Math.PI / 8) * rIn, Math.sin(a + Math.PI / 8) * rIn);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Crisp dark pill code label underneath flag (like CAN, AUS, JPN, MEX in screenshot)
+        if (showCodeBadges) {
+          ctx.save();
+          ctx.font = '700 8px "JetBrains Mono", monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const boxW = 24;
+          const boxH = 11;
+          const boxY = f.y + f.r + 4;
+          ctx.fillStyle = 'rgba(9, 13, 22, 0.9)';
+          ctx.fillRect(f.x - boxW / 2, boxY, boxW, boxH);
+          ctx.fillStyle = '#F8FAFC';
+          ctx.fillText(f.code, f.x, boxY + boxH / 2 + 0.5);
+          ctx.restore();
+        }
+      }
+
+      // Sparks
+      for (let i = 0; i < sparks.length; i++) {
+        const s = sparks[i];
+        ctx.globalAlpha = Math.max(0, s.life / s.maxLife);
+        ctx.fillStyle = s.color;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      // Floating elimination notices
+      for (let i = 0; i < notices.length; i++) {
+        const n = notices[i];
+        ctx.globalAlpha = Math.max(0, n.life / n.maxLife);
+        ctx.font = '700 11px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = n.color;
+        ctx.fillText(n.text, n.x, n.y);
+      }
+      ctx.globalAlpha = 1;
+
+      ctx.restore();
+      rafId = requestAnimationFrame(step);
+    };
+
+    rafId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafId);
+  }, [participants, targetSurvivors, matchSeed, isActive, isFinal]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="h-full w-full object-contain select-none"
+      aria-label="Flags fighting area"
+    />
+  );
+}
