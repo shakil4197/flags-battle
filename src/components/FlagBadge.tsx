@@ -4,17 +4,20 @@ import { COUNTRY_250_MAP, type CountryDef } from '../data/flags250';
 interface FlagBadgeProps {
   code: string;
   size?: number;
+  fluid?: boolean;
   className?: string;
 }
 
-export function FlagBadge({ code, size = 32, className = '' }: FlagBadgeProps) {
+export function FlagBadge({ code, size = 32, fluid = false, className = '' }: FlagBadgeProps) {
   const uid = useId();
   const country = COUNTRY_250_MAP[code];
   if (!country) {
     return (
       <span
-        style={{ width: size, height: size }}
-        className={`inline-flex items-center justify-center rounded-full border border-white/20 bg-slate-800 font-mono text-[9px] font-bold text-slate-200 ${className}`}
+        style={fluid ? undefined : { width: size, height: size }}
+        className={`inline-flex items-center justify-center rounded-full border border-white/20 bg-slate-800 font-mono text-[9px] font-bold text-slate-200 ${
+          fluid ? 'h-full w-full' : ''
+        } ${className}`}
       >
         {code.slice(0, 3)}
       </span>
@@ -23,8 +26,8 @@ export function FlagBadge({ code, size = 32, className = '' }: FlagBadgeProps) {
 
   return (
     <svg
-      width={size}
-      height={size}
+      width={fluid ? '100%' : size}
+      height={fluid ? '100%' : size}
       viewBox="0 0 64 64"
       aria-label={country.name}
       className={`shrink-0 rounded-full bg-[#0B0F19] ${className}`}
